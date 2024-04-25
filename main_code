@@ -1,0 +1,95 @@
+// Define the study area
+var studyArea = ee.Geometry.Rectangle([-105.3, 39.7, -105, 40]);
+
+// Center the map on the study area
+Map.centerObject(studyArea, 10);
+
+// Define the time range for NDVI analysis
+var startDate = '2019-01-01';
+var endDate = '2019-12-31';
+
+// Function to add NDVI band to Sentinel-2 image
+function addNDVI(image){
+  var ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI');
+  return image.addBands(ndvi);
+}
+
+// Filter Sentinel-2 image collection and apply cloud masking
+var S2collection = ee.ImageCollection('COPERNICUS/S2_SR')
+  .filterBounds(studyArea)
+  .filterDate(startDate, endDate)
+  .map(function(image) {
+    var cloudProbability = image.select('MSK_CLDPRB');
+    var mask = cloudProbability.lt(20);
+    return image.updateMask(mask);
+  })
+  .map(addNDVI);
+
+// Calculate median NDVI for each month
+var monthlyNDVI = ee.ImageCollection.fromImages(
+  ee.List.sequence(1, 12).map(function(month) {
+    var filtered = S2collection.filter(ee.Filter.calendarRange(month, month, 'month'));
+    var median = filtered.select('NDVI').median();
+    return median.set('month', month);
+  })
+);
+
+// Define visualization parameters for NDVI
+var ndviVis = {
+  min: -0.2,
+  max: 0.8,
+  palette: ['blue', 'white', 'green']
+};
+
+// Display the first NDVI image
+Map.addLayer(monthlyNDVI.first(), ndviVis, 'January NDVI');
+
+// Define GIF visualization parameters
+var gifParams = {
+  'region': studyArea,
+  'dimensions': 600,
+  'framesPerSecond': 1
+};
+
+// Create visualization for NDVI images for use as animation frames
+var ndviVisCollection = monthlyNDVI.map(function(image) {
+  return image.visualize(ndviVis);
+});
+
+// Print the GIF URL to the console
+print('Link to NDVI GIF animation:', ndviVisCollection.getVideoThumbURL(gifParams));
+
+/// GIF button for NDVI GIF on Map
+var GIF_NDVI = ui.Button({
+  label: 'Create NDVI GIF Animation',
+  onClick: function() {
+    Map.add(ui.Thumbnail({
+      image: ndviVisCollection,
+      params: gifParams,
+      style: {position: 'bottom-right'}
+    }));
+  },
+  style: {position: 'top-right'}
+});
+Map.add(GIF_NDVI);
+
+// Create a time series chart for NDVI
+var ndviTimeSeries = ui.Chart.image.series({
+  imageCollection: S2collection.select('NDVI'),
+  region: studyArea,
+  reducer: ee.Reducer.median(),
+  scale: 10,
+}).setChartType('LineChart')
+  .setOptions({
+    title: 'NDVI Time Series (2019)',
+    hAxis: {title: 'Date'},
+    vAxis: {title: 'NDVI'},
+    lineWidth: 1,
+    pointSize: 3,
+    series: {
+      0: {color: 'green'}
+    }
+});
+
+// Add the time series chart to the console
+print('NDVI Time Series (2019)', ndviTimeSeries);
